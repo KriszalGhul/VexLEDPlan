@@ -1,0 +1,160 @@
+// Application state and rendering
+const $=s=>document.querySelector(s), stage=$('#stage');
+const starterCatalog=[{manufacturer:'Infiled',pitch:'P3.9',width:500,height:1000,pixelWidth:128,pixelHeight:256,maxPower:600,averagePower:200},{manufacturer:'Infiled',pitch:'P1.9',width:500,height:500,pixelWidth:256,pixelHeight:256,maxPower:720,averagePower:180},{manufacturer:'Infiled',pitch:'P3.9',width:500,height:500,pixelWidth:128,pixelHeight:128,maxPower:600,averagePower:200},{manufacturer:'Absen',pitch:'P2.5',width:500,height:500,pixelWidth:200,pixelHeight:200,maxPower:580,averagePower:190}];
+const cabinetKey=c=>[c.manufacturer,c.pitch,c.width,c.height,c.pixelWidth,c.pixelHeight].join('|').toLowerCase();
+
+function readCabinetCache(){try{let saved=JSON.parse(localStorage.getItem('linework.cabinetCatalog'));
+return Array.isArray(saved)&&saved.length?saved.map(c=>({...starterCatalog.find(d=>cabinetKey(d)===c.id),...c})):starterCatalog.map(c=>({...c,id:cabinetKey(c)}))}catch{return starterCatalog.map(c=>({...c,id:cabinetKey(c)}))}}let catalog=readCabinetCache(),cabinetId=catalog[0].id,activeCabinet=catalog[0],cols=8,rows=4,wallWidth=4000,wallHeight=4000,wallRows=[],cw=activeCabinet.width,ch=activeCabinet.height,pixelW=activeCabinet.pixelWidth,pixelH=activeCabinet.pixelHeight,scale=1,mode='select',routes=[],draft=[],labels=true,toastTimer,selectedRoute=null,draggingPoint=null,pointerDrawing=false,visibleFlows={power:true,signal:true},projectName='Untitled wall',pages=[],activePageId=null,systemView=false,sideAssignments={left:"",center:"",right:""},selectedCanvasPageIds=[],systemCanvasSize=null,panning=null,panCursor="",wallMount='hanging',selectedSignalCard=1,selectedSignalPort=1,signalPortArmed=false,signalRecommendedCabinets=0,bottomPortMode="signal",selectedPowerPort=1,selectedPowerCard=1,powerPortArmed=false;
+
+function buildWallRows(height){let family=catalog.filter(c=>c.manufacturer.toLowerCase()===activeCabinet.manufacturer.toLowerCase()&&c.pitch.toLowerCase()===activeCabinet.pitch.toLowerCase()&&c.width===cw&&c.pixelWidth===pixelW),best=Array(height+1).fill(null);
+best[0]=[];
+for(let h=1;h<=height;h++)for(const model of family){if(model.height>h||!best[h-model.height])continue;
+let candidate=[...best[h-model.height],model],cost=x=>[x.filter(c=>c.id!==activeCabinet.id).length,x.length],a=cost(candidate),b=best[h]?cost(best[h]):null;
+if(!b||a[0]<b[0]||(a[0]===b[0]&&a[1]<b[1]))best[h]=candidate}return best[height]?.sort((a,b)=>b.height-a.height)||null}
+function fitRoutesToWall(){if(!wallRows.length)return;
+routes=routes.map(r=>{let seen=new Set,points=[];for(const p of r.points){let q={x:Math.max(0,Math.min(cols-1,p.x)),y:Math.max(0,Math.min(rows-1,p.y))},key=`${q.x},${q.y}`;if(!seen.has(key)){seen.add(key);points.push(q)}}return {...r,points}}).filter(r=>r.points.length>=2);
+if(!routes.some(r=>r.id===selectedRoute))selectedRoute=null}
+function applyCabinetSelection(){activeCabinet=catalog.find(c=>c.id===cabinetId)||catalog[0];
+if(!activeCabinet)return;
+cw=activeCabinet.width;
+ch=activeCabinet.height;
+pixelW=activeCabinet.pixelWidth;
+pixelH=activeCabinet.pixelHeight;
+try{localStorage.setItem('linework.selectedCabinet',activeCabinet.id)}catch{}cols=Math.max(1,Math.round(wallWidth/cw));
+wallWidth=cols*cw;
+$('#wallWidth').value=(wallWidth/1000).toFixed(1);
+$('#wallHeight').value=(wallHeight/1000).toFixed(1);
+wallRows=buildWallRows(Math.round(wallHeight))||[];
+rows=wallRows.length;
+fitRoutesToWall();
+let family=catalog.filter(c=>c.manufacturer.toLowerCase()===activeCabinet.manufacturer.toLowerCase()&&c.pitch.toLowerCase()===activeCabinet.pitch.toLowerCase()),sizes=family.map(c=>`${c.width} × ${c.height} mm`).join(', '),pxHeight=wallRows.reduce((n,c)=>n+c.pixelHeight,0);
+$('#cabinetDetails').textContent=`Connectable family · ${activeCabinet.manufacturer} ${activeCabinet.pitch} · ${sizes}`;
+$('#wallSpecs').innerHTML=wallRows.length?`Wall size <strong>${wallWidth/1000} × ${wallHeight/1000} m</strong>
+<br>Resolution <strong>${cols*pixelW} × ${pxHeight} px</strong>`:`No exact cabinet layout for ${wallWidth/1000} × ${wallHeight/1000} m`;
+let groups=[];
+for(const c of wallRows){let last=groups.at(-1);
+if(last&&last.model.id===c.id)last.count++;
+else groups.push({model:c,count:1})}$('#wallPlan').textContent=wallRows.length?`${cols} columns · ${groups.map(g=>`${g.count} row${g.count===1?'':'s'} of ${g.model.height/1000} m`).join(' + ')}`:'Adjust wall height to a combination of compatible cabinet heights.';
+updateSignalCapacity()}async function readXlsxCabinets(file){let bytes=new Uint8Array(await file.arrayBuffer()),view=new DataView(bytes.buffer),eocd=-1;
+for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65558);i--)if(view.getUint32(i,true)===0x06054b50){eocd=i;
+break}if(eocd<0)throw Error('This file does not look like an Excel workbook.');
+let total=view.getUint16(eocd+10,true),offset=view.getUint32(eocd+16,true),entries=new Map,decoder=new TextDecoder();
+for(let i=0;i<total;i++){if(view.getUint32(offset,true)!==0x02014b50)throw Error('Could not read the workbook file list.');
+let method=view.getUint16(offset+10,true),compressedSize=view.getUint32(offset+20,true),nameLen=view.getUint16(offset+28,true),extraLen=view.getUint16(offset+30,true),commentLen=view.getUint16(offset+32,true),localOffset=view.getUint32(offset+42,true),name=decoder.decode(bytes.slice(offset+46,offset+46+nameLen)),localNameLen=view.getUint16(localOffset+26,true),localExtraLen=view.getUint16(localOffset+28,true),start=localOffset+30+localNameLen+localExtraLen,compressed=bytes.slice(start,start+compressedSize);
+let content;
+if(method===0)content=compressed;
+else if(method===8){if(!window.DecompressionStream)throw Error('Use a recent Chrome or Edge browser to read .xlsx files.');
+let stream=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+content=new Uint8Array(await new Response(stream).arrayBuffer())}else throw Error('This workbook uses an unsupported compression method.');
+entries.set(name,decoder.decode(content));
+offset+=46+nameLen+extraLen+commentLen} const parseXml=(s)=>{let d=new DOMParser().parseFromString(s,'application/xml');
+if(d.querySelector('parsererror'))throw Error('The workbook contains invalid XML.');
+return d},all=(node,name)=>Array.from(node.getElementsByTagNameNS('*',name)),wb=parseXml(entries.get('xl/workbook.xml')||''),rels=parseXml(entries.get('xl/_rels/workbook.xml.rels')||''),sheet=all(wb,'sheet')[0];
+if(!sheet)throw Error('No worksheet was found in this workbook.');
+let rid=sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id'),rel=all(rels,'Relationship').find(x=>x.getAttribute('Id')===rid);
+if(!rel)throw Error('Could not find the first worksheet.');
+let target=rel.getAttribute('Target').replace(/^\/+/,''),parts=target.startsWith('xl/')?[]:['xl'];
+for(let p of target.split('/')){if(!p||p==='.')continue;
+if(p==='..')parts.pop();
+else parts.push(p)}let sheetPath=parts.join('/'),xml=entries.get(sheetPath);
+if(!xml)throw Error('Could not read the first worksheet.');
+let shared=[];
+if(entries.has('xl/sharedStrings.xml'))for(const item of all(parseXml(entries.get('xl/sharedStrings.xml')),'si'))shared.push(all(item,'t').map(t=>t.textContent).join(''));
+let ws=parseXml(xml),rowsXml=all(ws,'row'),columnIndex=ref=>{let m=ref.match(/[A-Z]+/i),n=0;
+for(const c of (m?m[0].toUpperCase():''))n=n*26+c.charCodeAt(0)-64;
+return n-1},matrix=rowsXml.map(row=>{let out=[];for(const cell of all(row,'c')){let idx=columnIndex(cell.getAttribute('r')),type=cell.getAttribute('t'),v=all(cell,'v')[0]?.textContent??'';if(type==='s')v=shared[+v]??'';else if(type==='inlineStr')v=all(cell,'t').map(t=>t.textContent).join('');out[idx]=v}return out}),norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]/g,''),head=(matrix.find(r=>r.some(v=>String(v??'').trim()))||[]).map(norm),idx={manufacturer:head.findIndex(x=>x==='manufacturer'),pitch:head.findIndex(x=>x==='pitch'),width:head.findIndex(x=>x==='sizewidthmm'),height:head.findIndex(x=>x==='sizeheightmm'),pixelWidth:head.findIndex(x=>x==='pixelswidepx'),pixelHeight:head.findIndex(x=>x==='pixelshighpx'),maxPower:head.findIndex(x=>x==='powerconsumptionmaxwm2'),averagePower:head.findIndex(x=>x==='powerconsumptionaveragewm2')};
+if(Object.values(idx).some(n=>n<0))throw Error('Expected cabinet size, resolution, and both power consumption columns in the workbook.');
+let result=matrix.slice(1).map(r=>({manufacturer:String(r[idx.manufacturer]??'').trim(),pitch:String(r[idx.pitch]??'').trim(),width:+r[idx.width],height:+r[idx.height],pixelWidth:+r[idx.pixelWidth],pixelHeight:+r[idx.pixelHeight],maxPower:+r[idx.maxPower],averagePower:+r[idx.averagePower]})).filter(c=>c.manufacturer&&c.pitch&&[c.width,c.height,c.pixelWidth,c.pixelHeight,c.maxPower,c.averagePower].every(n=>Number.isFinite(n)&&n>0)).map(c=>({...c,id:cabinetKey(c)}));
+if(!result.length)throw Error('No complete cabinet records were found.');
+return [...new Map(result.map(c=>[c.id,c])).values()]}
+function renderCabinetOptions(){let select=$('#cabinetModel'),groups=new Map;
+try{let preferred=localStorage.getItem('linework.selectedCabinet');
+if(catalog.some(c=>c.id===preferred))cabinetId=preferred}catch{}select.replaceChildren();
+for(const c of catalog){let key=`${c.manufacturer} · ${c.pitch}`;
+if(!groups.has(key)){let g=document.createElement('optgroup');
+g.label=`${key} · compatible`;
+groups.set(key,g);
+select.append(g)}let o=document.createElement('option');
+o.value=c.id;
+o.textContent=`${c.width} × ${c.height} mm · ${c.pixelWidth} × ${c.pixelHeight} px`;
+groups.get(key).append(o)}if(!catalog.some(c=>c.id===cabinetId))cabinetId=catalog[0]?.id;
+select.value=cabinetId;
+select.onchange=()=>{cabinetId=select.value;
+applyCabinetSelection();
+render();
+$('#fitBtn').click();
+updateSignalCapacity()};
+applyCabinetSelection()}
+function dims(){let cellW=70,rowHeights=wallRows.map(r=>70*r.height/cw),rowTops=[],rowCenters=[],h=0;
+for(const rh of rowHeights){rowTops.push(h);
+rowCenters.push(h+rh/2);
+h+=rh}return {w:cols*cellW,h,cellW,rowHeights,rowTops,rowCenters,pad:30}}
+function offsetPolyline(pts,distance){let normals=[];
+for(let i=0;i<pts.length-1;i++){let dx=pts[i+1].x-pts[i].x,dy=pts[i+1].y-pts[i].y,len=Math.hypot(dx,dy);
+normals.push(len?{x:-dy/len,y:dx/len}:{x:0,y:0})}return pts.map((p,i)=>{if(i===0){let n=normals[0];return {x:p.x+n.x*distance,y:p.y+n.y*distance}}if(i===pts.length-1){let n=normals[normals.length-1];return {x:p.x+n.x*distance,y:p.y+n.y*distance}}let a=normals[i-1],b=normals[i],mx=a.x+b.x,my=a.y+b.y,ml=Math.hypot(mx,my);if(ml<1e-6)return {x:p.x+a.x*distance,y:p.y+a.y*distance};mx/=ml;my/=ml;let dot=mx*a.x+my*a.y,denom=Math.abs(dot)<.1?(dot<0?-.1:.1):dot,scale=Math.max(-14,Math.min(14,distance/denom));return {x:p.x+mx*scale,y:p.y+my*scale}})}
+function displayPointsFor(route,cellW,rowCenters,pad){ let pts=route.points.map(p=>({x:pad+(p.x+.5)*cellW,y:pad+rowCenters[p.y]})),offsets=pts.map(()=>({x:0,y:0,n:0})),first=route.points[0],last=route.points.at(-1);
+ let paired=routes.some(other=>other!==route&&other.type!==route.type&&((other.points[0].x===first.x&&other.points[0].y===first.y&&other.points.at(-1).x===last.x&&other.points.at(-1).y===last.y)||(other.points[0].x===last.x&&other.points[0].y===last.y&&other.points.at(-1).x===first.x&&other.points.at(-1).y===first.y)));
+ if(paired){let forward=first.y<last.y||(first.y===last.y&&first.x<=last.x),side=(route.type==='power'?-1:1)*(forward?1:-1);
+return offsetPolyline(pts,side*3.5)} for(let i=0;i<pts.length-1;i++){let a=pts[i],b=pts[i+1],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);
+if(!len)continue;
+let ux=dx/len,uy=dy/len;
+if(ux<0||(Math.abs(ux)<1e-8&&uy<0)){ux=-ux;
+uy=-uy}let shared=false;
+for(const other of routes){if(other===route||other.type===route.type)continue;
+for(let j=0;j<other.points.length-1;j++){let c={x:pad+(other.points[j].x+.5)*cellW,y:pad+rowCenters[other.points[j].y]},d={x:pad+(other.points[j+1].x+.5)*cellW,y:pad+rowCenters[other.points[j+1].y]},ex=d.x-c.x,ey=d.y-c.y,elen=Math.hypot(ex,ey);
+if(!elen||Math.abs(ux*(ey/elen)-uy*(ex/elen))>.001)continue;
+if(Math.abs(ux*(c.y-a.y)-uy*(c.x-a.x))>1)continue;
+let s1=a.x*ux+a.y*uy,s2=b.x*ux+b.y*uy,s3=c.x*ux+c.y*uy,s4=d.x*ux+d.y*uy;
+if(Math.min(Math.max(s1,s2),Math.max(s3,s4))-Math.max(Math.min(s1,s2),Math.min(s3,s4))>.5){shared=true;
+break}}if(shared)break}if(shared){let sign=route.type==='power'?-1:1,nx=-uy*sign*3.5,ny=ux*sign*3.5;
+for(const k of [i,i+1]){offsets[k].x+=nx;
+offsets[k].y+=ny;
+offsets[k].n++}}}return pts.map((p,i)=>offsets[i].n?{x:p.x+offsets[i].x/offsets[i].n,y:p.y+offsets[i].y/offsets[i].n}:p)}function powerArrowMarkup(pts){return pts.slice(0,-1).map((a,i)=>{let b=pts[i+1],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);if(len<1)return '';let ux=dx/len,uy=dy/len,mx=(a.x+b.x)/2,my=(a.y+b.y)/2,tip={x:mx+ux*6,y:my+uy*6},base={x:mx-ux*3.5,y:my-uy*3.5},nx=-uy*3.2,ny=ux*3.2;return `<polygon class="power-arrow" points="${tip.x},${tip.y} ${base.x+nx},${base.y+ny} ${base.x-nx},${base.y-ny}"/>`}).join('')}function systemSidePages(){return pages.filter(page=>selectedCanvasPageIds.includes(page.id)).map(page=>({side:page.name,page}))}function wallMetrics(page){let model=catalog.find(c=>c.id===page.cabinetId);
+if(!model)return null;
+let saved={activeCabinet,cw,pixelW};
+activeCabinet=model;
+cw=model.width;
+pixelW=model.pixelWidth;
+let rowModels=buildWallRows(Math.round(page.wallHeight))||[],family=catalog.filter(c=>c.manufacturer.toLowerCase()===model.manufacturer.toLowerCase()&&c.pitch.toLowerCase()===model.pitch.toLowerCase()&&c.width===model.width&&c.pixelWidth===model.pixelWidth);
+activeCabinet=saved.activeCabinet;
+cw=saved.cw;
+pixelW=saved.pixelW;
+if(page.wallMount==='floor')rowModels.reverse();
+if(!rowModels.length)return null;
+let columns=Math.max(1,Math.round(page.wallWidth/model.width)),rowCabinetDimensions=rowModels.map(c=>({width:c.width,height:c.height})),rowCabinetPixels=rowModels.map(c=>c.pixelWidth*c.pixelHeight),rowCabinetAverageWatts=rowModels.map(c=>c.width*c.height/1e6*(c.averagePower||0)),rowCabinetMaxWatts=rowModels.map(c=>c.width*c.height/1e6*(c.maxPower||0)),cabinetPixels=Math.max(model.pixelWidth*model.pixelHeight,...family.map(c=>c.pixelWidth*c.pixelHeight)),area=rowModels.reduce((n,c)=>n+c.width*c.height/1e6,0)*columns,maxPower=rowModels.reduce((n,c)=>n+c.width*c.height/1e6*(c.maxPower||0),0)*columns,averagePower=rowModels.reduce((n,c)=>n+c.width*c.height/1e6*(c.averagePower||0),0)*columns,pixels=columns*rowCabinetPixels.reduce((n,v)=>n+v,0);
+return {page,columns,rows:rowModels.length,cabinets:columns*rowModels.length,area,maxPower,averagePower,pixels,cabinetPixels,rowCabinetPixels,rowCabinetDimensions,rowCabinetAverageWatts,rowCabinetMaxWatts}}function renderWallTotals(){let metrics=systemView?systemSidePages().map(x=>wallMetrics(x.page)).filter(Boolean):[{area:wallRows.reduce((sum,c)=>sum+c.width*c.height/1e6,0)*cols,maxPower:wallRows.reduce((sum,c)=>sum+c.width*c.height/1e6*(c.maxPower||0),0)*cols,averagePower:wallRows.reduce((sum,c)=>sum+c.width*c.height/1e6*(c.averagePower||0),0)*cols}],area=metrics.reduce((n,m)=>n+m.area,0),max=metrics.reduce((n,m)=>n+m.maxPower,0),average=metrics.reduce((n,m)=>n+m.averagePower,0),format=n=>Math.round(n).toLocaleString('en-US'),note=systemView?`Whole system across ${metrics.length} assigned wall${metrics.length===1?'':'s'}.`:'Power totals use the workbook’s W/m² values multiplied by the calculated area of the current wall.';
+$('#wallTotals').innerHTML=metrics.length?`<div class="total-card"><div class="total-label">${systemView?'System area':'Wall area'}</div><span class="total-value">${area.toLocaleString('en-US',{maximumFractionDigits:2})}</span><span class="total-unit">m²</span></div><div class="total-card"><div class="total-label">${systemView?'System maximum power consumption':'Maximum power consumption'}</div><span class="total-value">${format(max)}</span><span class="total-unit">W</span></div><div class="total-card"><div class="total-label">${systemView?'System average power consumption':'Average power consumption'}</div><span class="total-value">${format(average)}</span><span class="total-unit">W</span></div><p class="total-note">${note}</p>`:'<p class="total-note">Choose compatible wall layouts and assign them to a side to calculate system totals.</p>'}function renderSingle(){applyCabinetSelection();
+if(wallMount==='floor')wallRows=[...wallRows].reverse();
+let {w,h,cellW,rowHeights,rowTops,rowCenters,pad}=dims(),W=w+pad*2,H=h+pad*2;
+stage.style.width=W*scale+'px';
+stage.style.height=H*scale+'px';
+let z=`<svg id="wallSvg" xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="LED wall cabling plan">
+<style>.tile{fill:#242a2e;stroke:#4a5359;stroke-width:1.3}.tiletext{font:10px monospace;fill:#a4adb4;text-anchor:middle;dominant-baseline:middle}.route{fill:none;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}.route.power{stroke:#ff826f}.route.signal{stroke:#6eb8ff}.power-arrow{fill:#ff826f;stroke:#171b1e;stroke-width:1}.routepoint{stroke:#111416;stroke-width:1.6}.routepoint.power{fill:#ff826f}.routepoint.signal{fill:#6eb8ff}.route-start{stroke:#f2f4f5;stroke-width:1.5}.route-start.power{fill:#ff826f}.route-start.signal{fill:#6eb8ff}.route-end.power{fill:#ff826f;stroke:#111416;stroke-width:1.5}.route-end.signal{fill:#6eb8ff;stroke:#111416;stroke-width:1.5}.route-number{font:bold 9px Arial,sans-serif;fill:#fff;paint-order:stroke;stroke:#171b1e;stroke-width:2.5px;stroke-linejoin:round}.stage-label{font:11px monospace;fill:#8e999f;letter-spacing:.4px}</style>
+<rect x="${pad}" y="${pad}" width="${w}" height="${h}" fill="#171b1e" stroke="#59636a" stroke-width="1.5"/>`;
+for(let y=0;y<wallRows.length;y++)for(let x=0;x<cols;x++){let cellH=rowHeights[y],xx=pad+x*cellW,yy=pad+rowTops[y];
+z+=`<rect class="tile" x="${xx+2}" y="${yy+2}" width="${cellW-4}" height="${cellH-4}" rx="3" data-cell="${x},${y}"/>`;
+if(labels)z+=`<text class="tiletext" x="${xx+cellW/2}" y="${yy+cellH/2}">${columnLabel(x)}${y+1}</text>`}z+=`<text class="stage-label" x="${pad}" y="${H-7}">${cols} COLUMNS × ${rows} ROWS  ·  ${wallWidth/1000} × ${wallHeight/1000} M  ·  ${cols*pixelW} × ${wallRows.reduce((n,r)=>n+r.pixelHeight,0)} PX</text>`;
+let routeNums={power:0,signal:0};
+if(wallRows.length)for(const r of routes){let num=++routeNums[r.type];
+if(!visibleFlows[r.type])continue;
+let tag=(r.type==='power'?'P':'S')+num,pts=displayPointsFor(r,cellW,rowCenters,pad);
+z+=`<polyline class="route ${r.type}${r.id===selectedRoute?' selected':''}" data-route-id="${r.id}" data-route="${r.id}" points="${pts.map(p=>p.x+','+p.y).join(' ')}"/>`;
+if(r.type==='power')z+=powerArrowMarkup(pts);
+for(let i=1;i<pts.length-1;i++)z+=`<circle class="routepoint ${r.type}" data-route-id="${r.id}" data-point-index="${i}" cx="${pts[i].x}" cy="${pts[i].y}" r="3.4"/>`;
+let a=pts[0],b=pts[pts.length-1],labelRadius=Math.max(8,tag.length*3+3);
+z+=`<circle class="route-start ${r.type}" data-route-id="${r.id}" data-point-index="0" cx="${a.x}" cy="${a.y}" r="${labelRadius}"/>
+<text class="route-number" text-anchor="middle" x="${a.x}" y="${a.y+3}">${tag}</text>
+<polygon class="route-end ${r.type}" data-route-id="${r.id}" data-point-index="${pts.length-1}" points="${b.x},${b.y-7} ${b.x+7},${b.y} ${b.x},${b.y+7} ${b.x-7},${b.y}"/>`}if(draft.length&&wallRows.length&&visibleFlows[mode]){z+=`<polyline class="drawing" stroke="${mode==='power'?'#ff826f':'#6eb8ff'}" points="${draft.map(p=>(pad+(p.x+.5)*cellW)+','+(pad+rowCenters[p.y])).join(' ')}"/>`;
+for(const p of draft)z+=`<circle cx="${pad+(p.x+.5)*cellW}" cy="${pad+rowCenters[p.y]}" r="3.5" fill="${mode==='power'?'#ff826f':'#6eb8ff'}"/>`}z+='</svg>';
+stage.innerHTML=z;
+$('#emptyHint').textContent=wallRows.length?'Select a cable type, then click or drag across cabinet centers to start a route':'No exact cabinet layout. Adjust the wall height to fit compatible cabinet rows.';
+$('#emptyHint').style.display=!wallRows.length||(!routes.length&&!draft.length)?'block':'none';
+$('#finishBtn').disabled=draft.length<2||!wallRows.length;
+$('#saveState').textContent=routes.length?`${routes.length} route${routes.length===1?'':'s'} · unsaved`:'Ready to draw';
+document.getElementById('projectStatus').textContent='· changes not saved';
+$('#wallSvg').addEventListener('pointerdown',onPointPointerDown);
+$('#wallSvg').addEventListener('click',selectClickedRoute);
+$('#wallSvg').addEventListener('dblclick',e=>{e.preventDefault();finish()});
+renderRouteList();
+renderWallTotals();
+if(window.lineworkSignal)updateSignalCapacity()}

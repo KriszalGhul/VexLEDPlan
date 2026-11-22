@@ -1,0 +1,78 @@
+// Signal and power port bars
+function allSignalRouteRecords(){let records=[];
+for(const page of pages){let source=page.id===activePageId?routes:(page.routes||[]),n=0;
+for(const route of source)if(route.type==='signal')records.push({page,route,tag:'S'+(++n)})}return records}
+function setSignalCard(card){let config=processorInfo[window.lineworkSignal.processor],cards=Math.max(1,config.cards||1);
+selectedSignalCard=Math.max(1,Math.min(cards,card));
+selectedSignalPort=config.portsPerCard?((selectedSignalCard-1)*config.portsPerCard+1):0;
+signalPortArmed=false;
+renderSignalPortBar()}
+function renderSignalPortBar(){let bar=$('#signalPortBar');
+if(!bar)return;
+let enabled=$('#threadFeaturesToggle')?.getAttribute('aria-pressed')==='true';
+bar.hidden=!enabled;
+if(!enabled)return;
+$('#signalPortContent').hidden=bottomPortMode!=='signal';
+$('#powerPortContent').hidden=bottomPortMode!=='power';
+$('#bottomSignalMode').classList.toggle('active',bottomPortMode==='signal');
+$('#bottomPowerMode').classList.toggle('active',bottomPortMode==='power');
+$('#bottomSignalMode').setAttribute('aria-pressed',String(bottomPortMode==='signal'));
+$('#bottomPowerMode').setAttribute('aria-pressed',String(bottomPortMode==='power'));
+let config=processorInfo[window.lineworkSignal.processor],cards=Math.max(1,config.cards||1),perCard=config.portsPerCard||0;
+selectedSignalCard=Math.max(1,Math.min(cards,selectedSignalCard));
+let first=perCard?(selectedSignalCard-1)*perCard+1:0,last=perCard?Math.min(config.ports,first+perCard-1):0,count=last>=first?last-first+1:0,records=allSignalRouteRecords(),used=new Set;
+for(const item of records){let port=Number(item.route.portNumber);
+if(Number.isInteger(port)&&port>0&&port<=config.ports&&!used.has(port)){used.add(port);
+continue}item.route.portNumber=0;
+let free=0;
+for(let n=1;n<=config.ports;n++)if(!used.has(n)){free=n;
+break}if(free){item.route.portNumber=free;
+used.add(free)}}let currentRecords=allSignalRouteRecords(),portAssignments=currentRecords.filter(x=>Number(x.route.portNumber)===selectedSignalPort),selectedOwnPort=portAssignments.some(x=>x.page.id===activePageId&&x.route.id===selectedRoute);
+if(!selectedSignalPort||selectedSignalPort>config.ports||portAssignments.some(x=>x.page.id!==activePageId)){selectedSignalPort=0;
+for(let n=first;n<=last;n++)if(!used.has(n)){selectedSignalPort=n;
+break}}$('#signalPortCardLabel').textContent=`Card ${selectedSignalCard} of ${cards}${count?` · Ports ${first}–${last}`:' · No ports listed'}`;
+$('#signalCardButtons').innerHTML=Array.from({length:cards},(_,i)=>{let card=i+1,active=selectedSignalCard===card;return `<button class="btn ${active?'active':''}" data-signal-card="${card}" aria-label="Select output card ${card}" aria-pressed="${active}">${card}</button>`}).join('');
+$('#signalCardButtons').querySelectorAll('[data-signal-card]').forEach(button=>button.onclick=()=>setSignalCard(Number(button.dataset.signalCard)));
+let recordsByPort=new Map,pageMetrics=new Map(pages.map(page=>{let current=page.id===activePageId?{...page,cabinetId,wallWidth,wallHeight}:page;return [page.id,wallMetrics(current)]}));
+for(const item of currentRecords){let port=Number(item.route.portNumber);
+if(!port)continue;
+if(!recordsByPort.has(port))recordsByPort.set(port,[]);
+recordsByPort.get(port).push(item)}$('#signalPortsGrid').innerHTML=count?Array.from({length:count},(_,i)=>{let port=first+i,items=recordsByPort.get(port)||[],remote=items.some(x=>x.page.id!==activePageId),tag=items.map(x=>x.page.id===activePageId?x.tag:`${x.page.name} ${x.tag}`).join(', '),selected=signalPortArmed&&selectedSignalPort===port,buttonDisabled=remote,cabinetKeys=new Set,cabinetCount=0,cabinetLoad=0;for(const item of items){let metric=pageMetrics.get(item.page.id);for(const point of item.route.points||[]){let key=`${item.page.id}:${point.x},${point.y}`;if(cabinetKeys.has(key))continue;cabinetKeys.add(key);cabinetCount++;let rowPixels=metric?.rowCabinetPixels?.[point.y]||0,referencePixels=metric?.cabinetPixels||0;if(referencePixels)cabinetLoad+=rowPixels/referencePixels}}let loadPercent=signalRecommendedCabinets?Math.round(cabinetLoad/signalRecommendedCabinets*100):null,loadLabel=loadPercent===null?'—':`${loadPercent}%`,cabinetLoadText=Number.isInteger(cabinetLoad)?String(cabinetLoad):cabinetLoad.toFixed(1);let loadClass=loadPercent>100?'load-over':loadPercent>0?'load-ok':'';return `<button class="signal-port ${selected?'active ':''}${tag?'has-route ':''}${remote?'occupied-other ':''}${loadClass}" data-port-number="${port}" aria-pressed="${selected}" ${buttonDisabled?'disabled':''} title="${tag?`Assigned to ${items.map(x=>x.page.name+' '+x.tag).join(', ')} · ${cabinetCount} cabinets (${cabinetLoadText} large-cabinet equivalents) · ${loadLabel} load`:`Available · ${loadLabel} load`}"><span class="signal-port-number">${port}</span><span class="signal-port-meta"><span class="${tag?'signal-port-route':'signal-port-empty'}">${tag||'—'}</span><span class="signal-port-load">${loadLabel}</span></span></button>`}).join(''):'<div class="signal-port-empty-state">This processor card has no port count in the workbook.</div>';
+let unassigned=currentRecords.filter(x=>!Number(x.route.portNumber)||Number(x.route.portNumber)>config.ports).length,occupiedElsewhere=currentRecords.filter(x=>x.page.id!==activePageId&&Number(x.route.portNumber)>0).length;
+$('#signalPortFooter').textContent=`${occupiedElsewhere} port${occupiedElsewhere===1?' is':'s are'} reserved by other walls. `+(unassigned?`${unassigned} signal route${unassigned===1?' is':'s are'} waiting for a free port. `:'')+'Click a free port to arm signal routing; click that port again or press Esc to exit. Finishing a route disarms without switching ports. Select a route, then a free port to move it.';
+$('#signalPortsGrid').querySelectorAll('[data-port-number]').forEach(button=>button.onclick=()=>{let port=Number(button.dataset.portNumber),recordsAtPort=currentRecords.filter(x=>Number(x.route.portNumber)===port),selected=routes.find(r=>r.id===selectedRoute&&r.type==='signal');if(signalPortArmed&&selectedSignalPort===port&&!recordsAtPort.length){signalPortArmed=false;selectedRoute=null;setMode('select');return}if(recordsAtPort.length){let own=recordsAtPort.find(x=>x.page.id===activePageId);if(!own)return toast('This processor port is reserved by another wall');if(selected&&own.route.id===selected.id){selectedRoute=null;selectedSignalPort=port;signalPortArmed=false;setMode('select');return}if(selected){if(draft.length)finish();selected.portNumber=port;selectedRoute=null;selectedSignalPort=port;signalPortArmed=false;setMode('select');return}selectedRoute=own.route.id;selectedSignalPort=port;signalPortArmed=false;setMode('select');return}if(draft.length)finish();selectedSignalPort=port;selectedSignalCard=Math.floor((port-1)/Math.max(1,perCard))+1;if(selected){selected.portNumber=port;selectedRoute=null;signalPortArmed=false;setMode('select')}else{signalPortArmed=true;setMode('signal')}render()})}
+function allPowerRouteRecords(){let records=[];
+for(const page of pages){let source=page.id===activePageId?routes:(page.routes||[]),n=0;
+for(const route of source)if(route.type==='power')records.push({page,route,tag:'P'+(++n)})}return records}
+function renderPowerPortBar(){let enabled=$('#threadFeaturesToggle')?.getAttribute('aria-pressed')==='true';
+if(!enabled||bottomPortMode!=='power')return;
+let totalPorts=36,perBank=6,bankCount=6,records=allPowerRouteRecords(),used=new Set(records.map(x=>Number(x.route.powerPortNumber)).filter(n=>Number.isInteger(n)&&n>=1&&n<=totalPorts));
+for(const item of records){let port=Number(item.route.powerPortNumber);
+if(Number.isInteger(port)&&port>=1&&port<=totalPorts)continue;
+item.route.powerPortNumber=0;
+let free=0;
+for(let n=1;n<=totalPorts;n++)if(!used.has(n)){free=n;
+break}if(free){item.route.powerPortNumber=free;
+used.add(free)}}records=allPowerRouteRecords();
+let byPort=new Map,pageMetrics=new Map(pages.map(page=>{let current=page.id===activePageId?{...page,cabinetId,wallWidth,wallHeight,wallMount}:page;return [page.id,wallMetrics(current)]}));
+for(const item of records){let port=Number(item.route.powerPortNumber);
+if(!port)continue;
+if(!byPort.has(port))byPort.set(port,[]);
+byPort.get(port).push(item)}selectedPowerCard=Math.max(1,Math.min(bankCount,selectedPowerCard));
+let first=(selectedPowerCard-1)*perBank+1,last=first+perBank-1;
+$('#powerPortCardLabel').textContent=`Bank ${selectedPowerCard} of ${bankCount} · Sockets ${first}–${last}`;
+$('#powerCardButtons').innerHTML=Array.from({length:bankCount},(_,i)=>{let bank=i+1,active=selectedPowerCard===bank;return `<button class="btn ${active?'active':''}" data-power-card="${bank}" aria-label="Select power bank ${bank}" aria-pressed="${active}">${bank}</button>`}).join('');
+$('#powerCardButtons').querySelectorAll('[data-power-card]').forEach(button=>button.onclick=()=>{selectedPowerCard=Number(button.dataset.powerCard);powerPortArmed=false;renderPowerPortBar()});
+$('#powerPortsGrid').innerHTML=Array.from({length:perBank},(_,i)=>{let port=first+i,items=byPort.get(port)||[],tag=items.map(x=>x.page.id===activePageId?x.tag:`${x.page.name} ${x.tag}`).join(', '),selected=powerPortArmed&&selectedPowerPort===port,cabinetKeys=new Set;let averageW=0,maxW=0,cabinets=0;for(const item of items){let metric=pageMetrics.get(item.page.id);for(const point of item.route.points||[]){let key=`${item.page.id}:${point.x},${point.y}`;if(cabinetKeys.has(key))continue;cabinetKeys.add(key);cabinets++;averageW+=metric?.rowCabinetAverageWatts?.[point.y]||0;maxW+=metric?.rowCabinetMaxWatts?.[point.y]||0}}let loadPercent=Math.round(maxW/3680*100),loadClass=loadPercent>100?'load-over':loadPercent>0?'load-ok':'',loadLabel=`${loadPercent}%`,title=tag?`Shared power socket ${port} (bank ${Math.ceil(port/perBank)}): ${items.map(x=>x.page.name+' '+x.tag).join(', ')} · ${cabinets} cabinets · Average ${Math.round(averageW)} W (${(averageW/230).toFixed(2)} A) · Maximum ${Math.round(maxW)} W (${(maxW/230).toFixed(2)} A) of 16 A`:`Available · 0% load`;return `<button class="signal-port ${selected?'active ':''}${tag?'has-route ':''}${loadClass}" data-power-port="${port}" aria-pressed="${selected}" title="${title}"><span class="signal-port-number">${i+1}</span><span class="signal-port-meta"><span class="${tag?'signal-port-route':'signal-port-empty'}">${tag||'—'}</span><span class="signal-port-load">${loadLabel}</span></span></button>`}).join('');
+let usedPorts=byPort.size;
+$('#powerPortFooter').textContent=`Six 16 A sockets per 3-phase 32 A bank. Load uses maximum workbook W/m² across every wall sharing a socket (3,680 W per socket). ${usedPorts} of ${totalPorts} sockets used; green is up to 100%, red is over 100%.`;
+$('#powerPortsGrid').querySelectorAll('[data-power-port]').forEach(button=>button.onclick=()=>{let port=Number(button.dataset.powerPort),selected=routes.find(route=>route.id===selectedRoute&&route.type==='power');if(powerPortArmed&&selectedPowerPort===port){powerPortArmed=false;selectedRoute=null;setMode('select');return}if(draft.length)finish();selectedPowerPort=port;if(selected){selected.powerPortNumber=port;selectedRoute=null;powerPortArmed=false;setMode('select')}else{powerPortArmed=true;setMode('power')}render()})}function setBottomPortMode(next){if(bottomPortMode===next)return;
+if(draft.length){draft=[];
+pointerDrawing=false}signalPortArmed=false;
+powerPortArmed=false;
+if(mode==='signal'||mode==='power')setMode('select');
+bottomPortMode=next;
+renderSignalPortBar();
+renderPowerPortBar()}
+$('#bottomSignalMode').onclick=()=>setBottomPortMode('signal');
+$('#bottomPowerMode').onclick=()=>setBottomPortMode('power');
