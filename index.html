@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linework — LED wall planner</title>
+<link rel="stylesheet" href="styles.css">
+
+
+
+</head>
+<body>
+<div class="app">
+<header class="top">
+<div class="brand">
+<div class="logo">L</div>linework</div>
+<div class="project"><span id="projectName">Untitled wall</span> <small id="projectStatus">· not saved</small>
+</div>
+<div class="topright">
+<span class="saved" id="saveState">Ready to draw</span>
+<button class="btn" id="openProjectBtn">Open project</button>
+<button class="btn primary" id="saveProjectBtn">Save project</button>
+<button class="btn" id="resetBtn">Reset</button>
+<button class="btn primary" id="exportBtn">Export ↗</button>
+</div>
+</header>
+<div class="layout">
+<aside class="side">
+<section class="section">
+<div class="eyebrow">Wall layout</div>
+<div class="fieldlabel">Build wall from <span>cabinet model</span>
+</div>
+<select id="cabinetModel" class="cabinet-select" aria-label="Cabinet model">
+</select>
+<div class="hint" id="cabinetDetails">
+</div>
+<div class="fieldlabel">Wall size <span>meters · 0.5 m steps</span>
+</div>
+<div class="inputs">
+<div class="inputwrap">
+<input id="wallWidth" type="number" min="0.5" max="50" step="0.5" value="4">
+<span class="unit">W</span>
+</div>
+<div class="inputwrap">
+<input id="wallHeight" type="number" min="0.5" max="50" step="0.5" value="4">
+<span class="unit">H</span>
+</div>
+</div>
+<div class="cabinet-summary" id="wallSpecs">
+</div>
+<p class="hint" id="wallPlan">
+</p>
+<input id="cabinetFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+<input id="projectFile" type="file" accept=".json,application/json" hidden>
+<button class="btn" id="refreshCatalog" style="width:100%;margin-top:11px">Refresh from workbook</button>
+<p class="hint" id="catalogStatus">Cabinet list is saved in this browser. Refresh after workbook changes.</p>
+</section>
+<section class="section">
+<div class="eyebrow">Draw a route</div>
+<div class="route-tools">
+<button class="route-btn active" data-mode="select" style="--accent:#c4ccd2">
+<span class="route-icon">↖</span>Select &amp; edit</button>
+<button class="route-btn" data-mode="power" style="--accent:var(--red)">
+<span class="route-icon">⌁</span>Power cable</button>
+<button class="route-btn" data-mode="signal" style="--accent:var(--blue)">
+<span class="route-icon">⌁</span>Signal cable</button>
+</div>
+<p class="hint" id="hint">Choose a cable, then click or drag across cabinet centers to trace the route. Enter finishes; Backspace undoes.</p>
+<button class="btn" id="finishBtn" style="width:100%;margin-top:11px" disabled>Finish route</button>
+<button class="btn" id="undoBtn" style="width:100%;margin-top:7px">Undo last route</button>
+</section>
+<section class="section">
+<div class="eyebrow">Routes <span id="routeCount">0</span>
+</div>
+<div class="route-list" id="routeList">
+</div>
+<div class="route-editor" id="routeEditor" hidden>
+<div class="eyebrow">Edit selected</div>
+<div class="edit-actions">
+<button class="btn" id="typePower">Set power</button>
+<button class="btn" id="typeSignal">Set signal</button>
+<button class="btn" id="reverseRoute">Reverse direction</button>
+<button class="btn" id="deleteRoute">Delete route</button>
+</div>
+<p class="route-edit-hint">Drag any route point on the grid to move it to another cabinet.</p>
+</div>
+<p class="hint" id="noRoutesHint">Finished routes will appear here.</p>
+</section>
+<section class="section">
+<div class="eyebrow">Cable key</div>
+<div class="legend">
+<div class="legendrow">
+<span class="swatch" style="background:var(--red)">
+</span>Power · P1, P2…</div>
+<div class="legendrow">
+<span class="swatch" style="background:var(--blue)">
+</span>Signal · S1, S2…</div>
+</div>
+<p class="hint">Labeled circle = start · diamond = end</p>
+</section>
+<section>
+<div class="eyebrow">Canvas</div>
+<div class="seg">
+<button id="minus">−</button>
+<button id="zoomLabel" class="active">100%</button>
+<button id="plus">+</button>
+</div>
+<p class="hint">Routes snap to cabinet centers. Cabinet labels are optional.</p>
+<button class="btn" id="labelsBtn" style="width:100%;margin-top:10px">Hide cabinet labels</button>
+</section>
+</aside>
+<main class="workspace">
+<div class="pagebar"><div class="wall-tabs" id="wallTabs" role="tablist" aria-label="Walls"></div><button class="btn" id="addWallBtn">+ Add wall</button><label class="multiple-toggle"><input type="checkbox" id="multiWallToggle"> Multiple</label></div>
+<div class="toolbar">
+<button class="tool active" id="selectTool">↖ &nbsp;Select</button>
+<div class="divider">
+</div>
+<button class="tool" id="powerTool" style="color:var(--red)">— &nbsp;Power</button>
+<button class="tool" id="signalTool" style="color:var(--blue)">— &nbsp;Signal</button>
+<div class="divider"></div>
+<button class="tool" id="togglePower" aria-pressed="true" style="color:var(--red)">Hide Power</button>
+<button class="tool" id="toggleSignal" aria-pressed="true" style="color:var(--blue)">Hide Signal</button>
+<div class="toolspacer">
+</div>
+<button class="tool" id="fitBtn">Fit to view</button>
+<button class="tool" id="wallDetailsToggle" aria-pressed="false" aria-controls="wallDetailsPanel">Wall details</button>
+<button class="tool" id="signalToggle" aria-pressed="false" aria-controls="wallDetailsPanel">Signal</button>
+</div>
+<div class="boardwrap" id="boardwrap">
+<div class="board">
+<div class="stage" id="stage">
+</div>
+</div>
+<div class="empty-hint" id="emptyHint">Select a cable type, then click or drag across cabinet centers to start a route</div>
+<div class="toast" id="toast">
+</div>
+</div>
+<section class="signal-port-bar" id="signalPortBar" aria-label="Signal output ports" hidden>
+<div class="signal-port-header"><div><strong>Signal ports</strong><span id="signalPortCardLabel">Card 1 of 2 · Ports 1–16</span></div><div class="signal-card-controls" id="signalCardButtons" role="group" aria-label="Processor output cards"></div></div>
+<div class="signal-ports-grid" id="signalPortsGrid"></div>
+<div class="signal-port-footer" id="signalPortFooter"></div>
+</section>
+<aside class="wall-details-panel" id="wallDetailsPanel" aria-label="Wall details">
+<div class="wall-details-panel-header"><span class="wall-details-panel-title">Wall details</span><button class="tool" id="wallDetailsClose" aria-label="Close wall details">✕</button></div>
+<div class="wall-details-panel-body">
+<div id="wallTotals" class="wall-totals"></div>
+<div id="signalSettings" class="signal-settings" hidden>
+<div class="signal-field"><label for="signalProcessor">Processor</label><select id="signalProcessor"><option value="Novastar H2">Novastar H2</option><option value="Novastar H5">Novastar H5</option><option value="Novastar H9">Novastar H9</option><option value="Novastar COEX MX30">Novastar COEX MX30</option></select></div>
+<div class="total-card signal-capacity"><div class="total-label">Total available ports</div><span class="total-value" id="signalProcessorPorts">32</span><span class="total-unit">ports</span></div>
+<div class="signal-field"><label for="signalBitrate">Bitrate</label><select id="signalBitrate"><option value="8">8 bit</option><option value="10">10 bit</option><option value="16">16 bit</option></select></div>
+<div class="signal-field"><label for="signalRefreshRate">Refresh rate</label><select id="signalRefreshRate"><option value="24">24 Hz</option><option value="25">25 Hz</option><option value="30">30 Hz</option><option value="50" selected>50 Hz</option><option value="60">60 Hz</option><option value="100">100 Hz</option><option value="120">120 Hz</option></select></div>
+<div class="total-card signal-capacity"><div class="total-label">Maximum pixels per port</div><span class="total-value" id="signalMaxPixels">791,667</span><span class="total-unit">px</span></div>
+<div class="total-card signal-capacity"><div class="total-label">Recommended cabinets per port</div><span class="total-value" id="signalCabinetsPerPort">23</span><span class="total-unit" id="signalCabinetUnit">cabinets</span><p class="total-note" id="signalCabinetResolution">One cabinet below the port maximum.</p></div>
+<button class="btn" id="signalMaxToggle" aria-expanded="false" aria-controls="signalMaximum">Show maximum</button>
+<div id="signalMaximum" hidden><div class="total-card signal-capacity"><div class="total-label">Maximum cabinets per port</div><span class="total-value" id="signalMaxCabinets">24</span><span class="total-unit">cabinets</span></div></div>
+<div class="total-card signal-capacity"><div class="total-label">Wall signal capacity</div><span class="signal-result-status" id="signalWallStatus">Calculating</span><div class="signal-ports-used" id="signalPortsUsed">—</div><p class="total-note" id="signalWallStatusDetail">Checking the wall against processor ports.</p></div>
+</div></div>
+</aside>
+</main>
+</div>
+</div>
+<div class="export-backdrop" id="exportBackdrop">
+<section class="export-dialog" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+<h2 id="exportTitle">Export cabling</h2>
+<p class="export-sub">Choose the artwork and exact output size.</p>
+<div class="export-grid">
+<div class="export-control">
+<label for="exportFormat">File format</label>
+<select id="exportFormat">
+<option value="svg">SVG · vector</option>
+<option value="png">PNG · pixels</option>
+</select>
+</div>
+<div class="export-control">
+<label for="exportLayers">Cable layers</label>
+<select id="exportLayers">
+<option value="both">Signal + power</option>
+<option value="signal">Signal only</option>
+<option value="power">Power only</option>
+</select>
+</div>
+<div class="export-control">
+<label for="exportBackground">Background</label>
+<select id="exportBackground">
+<option value="solid">Wall background</option>
+<option value="transparent">Transparent</option>
+</select>
+</div>
+<div class="export-control">
+<label for="exportColors">Tile colors</label>
+<select id="exportColors">
+<option value="route">By route number</option>
+<option value="neutral">Neutral tiles</option>
+</select>
+</div>
+<div class="export-control" style="grid-column:1/-1">
+<label>Output resolution · pixels</label>
+<div class="export-dimensions">
+<input id="exportWidth" type="number" min="1" max="12000">
+<span>×</span>
+<input id="exportHeight" type="number" min="1" max="12000">
+</div>
+<p class="export-note" id="exportResolutionNote">Aspect ratio follows the wall layout. SVG remains resolution independent.</p>
+</div>
+</div>
+<div class="export-actions">
+<button class="btn" id="cancelExport">Cancel</button>
+<button class="btn primary" id="downloadExport">Export file</button>
+</div>
+</section>
+</div>
+<script src="app.js" defer></script>
+</body>
+</html>
